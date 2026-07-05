@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>プロンプト生成</title>
+  <style>
+    :root {
+      --bg-top: #04101f;
+      --bg-mid: #0a1930;
+      --bg-bottom: #123156;
+      --block-bg: rgba(18, 49, 86, 0.65);
+      --border-color: #24466f;
+      --text-main: #eef3fa;
+      --text-sub: #a9c1e0;
+      --accent: #4f92e0;
+      --accent-hover: #3b76c2;
+      --pre-bg: #061020;
+      --disabled-bg: #35507a;
+    }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI",
+        "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(ellipse at 50% -10%, rgba(159,199,255,0.22), transparent 60%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 40%, var(--bg-bottom) 100%);
+      min-height: 100vh;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2.5rem 1.2rem 3rem;
+      line-height: 1.7;
+    }
+    #progress { font-size: 0.9rem; color: var(--text-sub); margin-bottom: 1.2rem; }
+    .block {
+      background-color: var(--block-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 1.4rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background-color: var(--pre-bg);
+      color: var(--text-main);
+      padding: 0.9rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      font-size: 0.9rem;
+      margin: 0 0 0.8rem;
+    }
+    button {
+      cursor: pointer;
+      padding: 0.55rem 1.2rem;
+      background-color: var(--accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    button:hover:not(:disabled) { background-color: var(--accent-hover); }
+    #next-btn { display: block; width: 100%; margin-top: 1.2rem; padding: 0.9rem; font-size: 1rem; }
+    #next-btn:disabled { background-color: var(--disabled-bg); color: var(--text-sub); cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <p id="progress">読み込み中...</p>
+  <div id="app"></div>
+  <button id="next-btn" type="button" disabled>次へ</button>
+
+  <script type="module">
+    function extractValue(line, label) {
+      if (!line.startsWith(`* ${label}`)) return null;
+      const colonIndex = line.search(/[:：]/);
+      return colonIndex === -1 ? null : line.slice(colonIndex + 1).trim();
+    }
+
+    function parseIdeas(raw) {
+      const lines = raw.split('\n');
+      const ideas = [];
+      let current = {};
+      const flush = () => {
+        if (current.title && current.scene && current.comment) ideas.push({ ...current });
+        current = {};
+      };
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (line.startsWith('>') || line.startsWith('# ')) continue;
+        if (line.startsWith('## ')) {
+          flush();
+          current.title = line.slice(3).trim();
+          continue;
+        }
+        const scene = extractValue(line, '場面');
+        if (scene !== null) { current.scene = scene; continue; }
+        const comment = extractValue(line, '一言');
+        if (comment !== null) { current.comment = comment; continue; }
+      }
+      flush();
+      return ideas;
+    }
+
+    function buildText(preset, idea) {
+      return preset + '\n\n' +
+        ' - イラストのタイトル : ' + idea.title + '\n' +
+        '場面: ' + idea.scene + '\n' +
+        '一言: ' + idea.comment;
+    }
+
+    async function loadText(path) {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`読み込み失敗: ${path}`);
+      return res.text();
+    }
+
+    async function init() {
+      const appEl = document.getElementById('app');
+      const progressEl = document.getElementById('progress');
+      const nextBtn = document.getElementById('next-btn');
+
+      try {
+        const [rawMd, presetA, presetB] = await Promise.all([
+          loadText('content/source.md'),
+          loadText('presets/preset-a.txt'),
+          loadText('presets/preset-b.txt'),
+        ]);
+
+        const ideas = parseIdeas(rawMd);
+        const presets = [presetA.trim(), presetB.trim()];
+        let index = 0;
+
+        function render() {
+          if (ideas.length === 0) {
+            appEl.textContent = 'Markdownからアイデアが読み取れませんでした。';
+            progressEl.textContent = '';
+            return;
+          }
+          const idea = ideas[index];
+          appEl.innerHTML = '';
+
+          presets.forEach((preset, i) => {
+            const text = buildText(preset, idea);
+            const block = document.createElement('div');
+            block.className = 'block';
+
+            const pre = document.createElement('pre');
+            pre.textContent = text;
+
+            const copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.textContent = `パターン${i + 1}をコピー`;
+            copyBtn.addEventListener('click', () => {
+              navigator.clipboard.writeText(text).then(() => {
+                const orig = copyBtn.textContent;
+                copyBtn.textContent = 'コピーしました';
+                setTimeout(() => { copyBtn.textContent = orig; }, 1500);
+              });
+            });
+
+            block.appendChild(pre);
+            block.appendChild(copyBtn);
+            appEl.appendChild(block);
+          });
+
+          progressEl.textContent = `${index + 1} / ${ideas.length} 件目`;
+          const isLast = index >= ideas.length - 1;
+          nextBtn.disabled = isLast;
+          nextBtn.textContent = isLast
+            ? 'このMarkdownは最後まで到達しました（ファイルを書き換えてください）'
+            : '次へ';
+        }
+
+        nextBtn.addEventListener('click', () => {
+          if (index < ideas.length - 1) {
+            index += 1;
+            render();
+            window.scrollTo(0, 0);
+          }
+        });
+
+        nextBtn.disabled = false;
+        render();
+      } catch (err) {
+        progressEl.textContent = 'ファイルの読み込みに失敗しました。';
+        console.error(err);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
