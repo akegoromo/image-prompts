@@ -127,12 +127,16 @@
     return ideas;
   }
 
-  function buildText(preset, idea) {
-    return preset + '\n\n' +
-      ' - イラストのタイトル : ' + idea.title + '\n' +
-      '場面: ' + idea.scene + '\n' +
-      '一言: ' + idea.comment;
-  }
+function buildText(preset, idea) {
+  // ① タイトルから「#<連番>.」部分を取り除く
+  const cleanedTitle = idea.title.replace(/^#\d+\.\s*/, '').trim();
+
+  // ② プリセット文とタイトル行の間の空行を無くす（\n\n → \n）
+  return preset + '\n' +
+    ' - イラストのタイトル : ' + cleanedTitle + '\n' +
+    '場面: ' + idea.scene + '\n' +
+    '一言: ' + idea.comment;
+}
 
   async function loadText(path) {
     // Cloudflareのキャッシュにより古い内容が返り続けるのを避けるため、
