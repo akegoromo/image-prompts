@@ -70,125 +70,164 @@
   <div id="app"></div>
   <button id="next-btn" type="button" disabled>次へ</button>
 
-  <script type="module">
-    function extractValue(line, label) {
-      if (!line.startsWith(`* ${label}`)) return null;
-      const colonIndex = line.search(/[:：]/);
-      return colonIndex === -1 ? null : line.slice(colonIndex + 1).trim();
-    }
+<script type="module">
+  function parseIdeas(raw) {
+    // BOM除去と改行コードの統一（念のための防御的処理）
+    const normalized = raw
+      .replace(/^\uFEFF/, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
 
-    function parseIdeas(raw) {
-      const lines = raw.split('\n');
-      const ideas = [];
-      let current = {};
-      const flush = () => {
-        if (current.title && current.scene && current.comment) ideas.push({ ...current });
-        current = {};
-      };
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (line.startsWith('>') || line.startsWith('# ')) continue;
-        if (line.startsWith('## ')) {
-          flush();
-          current.title = line.slice(3).trim();
-          continue;
-        }
-        const scene = extractValue(line, '場面');
-        if (scene !== null) { current.scene = scene; continue; }
-        const comment = extractValue(line, '一言');
-        if (comment !== null) { current.comment = comment; continue; }
+    const lines = normalized.split('\n');
+    const ideas = [];
+    let current = {};
+
+    const flush = () => {
+      if (current.title && current.scene && current.comment) {
+        ideas.push({ ...current });
       }
-      flush();
-      return ideas;
+      current = {};
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue; // 空行は無視
+
+      // 「###」以上の見出し = 新しいアイテムの開始
+      // ハッシュが3つ以上続く行だけを対象にすることで、
+      // ハッシュ1つの「作品タイトル（H1）」は自動的にここから除外される（条件a対応）
+      const titleMatch = line.match(/^#{3,}\s*(.+)$/);
+      if (titleMatch) {
+        flush(); // 直前のアイテムを確定してから、新しいアイテムを開始する
+        current.title = titleMatch[1].trim(); // 「#1. サブタイトル」の形のまま、加工せず保持する
+        continue;
+      }
+
+      // 「場面」の抽出
+      // 先頭の箇条書き記号（-, *, ・）の有無・種類、コロンの全角半角を問わず対応
+      const sceneMatch = line.match(/^[-*・]?\s*場面\s*[:：]\s*(.+)$/);
+      if (sceneMatch && !current.scene) {
+        current.scene = sceneMatch[1].trim();
+        continue;
+      }
+
+      // 「一言」の抽出
+      const commentMatch = line.match(/^[-*・]?\s*一言\s*[:：]\s*(.+)$/);
+      if (commentMatch && !current.comment) {
+        current.comment = commentMatch[1].trim();
+        continue;
+      }
+
+      // 上記いずれにも該当しない行（H1の作品タイトル、
+      // 一言の後に続く補足・調整の文章など）は、
+      // 専用の除外コードを書かなくても自動的に無視される（条件b対応）
     }
 
-    function buildText(preset, idea) {
-      return preset + '\n\n' +
-        ' - イラストのタイトル : ' + idea.title + '\n' +
-        '場面: ' + idea.scene + '\n' +
-        '一言: ' + idea.comment;
-    }
+    flush(); // 最後のアイテムを忘れずに確定する
+    return ideas;
+  }
 
-    async function loadText(path) {
-      const res = await fetch(path);
-      if (!res.ok) throw new Error(`読み込み失敗: ${path}`);
-      return res.text();
-    }
+  function buildText(preset, idea) {
+    return preset + '\n\n' +
+      ' - イラストのタイトル : ' + idea.title + '\n' +
+      '場面: ' + idea.scene + '\n' +
+      '一言: ' + idea.comment;
+  }
 
-    async function init() {
-      const appEl = document.getElementById('app');
-      const progressEl = document.getElementById('progress');
-      const nextBtn = document.getElementById('next-btn');
+  async function loadText(path) {
+    // Cloudflareのキャッシュにより古い内容が返り続けるのを避けるため、
+    // 取得のたびに異なるクエリパラメータを付与する
+    const res = await fetch(path + '?v=' + Date.now());
+    if (!res.ok) throw new Error(`読み込み失敗: ${path} (status: ${res.status})`);
+    return res.text();
+  }
 
-      try {
-        const [rawMd, presetA, presetB] = await Promise.all([
-          loadText('content/source.md'),
-          loadText('presets/preset-a.txt'),
-          loadText('presets/preset-b.txt'),
-        ]);
+  async function init() {
+    const appEl = document.getElementById('app');
+    const progressEl = document.getElementById('progress');
+    const nextBtn = document.getElementById('next-btn');
 
-        const ideas = parseIdeas(rawMd);
-        const presets = [presetA.trim(), presetB.trim()];
-        let index = 0;
+    try {
+      const [rawMd, presetA, presetB] = await Promise.all([
+        loadText('content/source.md'),
+        loadText('presets/preset-a.txt'),
+        loadText('presets/preset-b.txt'),
+      ]);
 
-        function render() {
-          if (ideas.length === 0) {
-            appEl.textContent = 'Markdownからアイデアが読み取れませんでした。';
-            progressEl.textContent = '';
-            return;
-          }
-          const idea = ideas[index];
-          appEl.innerHTML = '';
+      const ideas = parseIdeas(rawMd);
+      const presets = [presetA.trim(), presetB.trim()];
+      let index = 0;
 
-          presets.forEach((preset, i) => {
-            const text = buildText(preset, idea);
-            const block = document.createElement('div');
-            block.className = 'block';
+      function render() {
+        if (ideas.length === 0) {
+          // 診断表示：実際に取得できた内容の先頭部分をそのまま画面に出す
+          const preview = rawMd.slice(0, 500)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          appEl.innerHTML =
+            '<div style="border:1px solid #ff6b6b;border-radius:6px;padding:1.2rem;background:rgba(255,0,0,0.08);">' +
+            '<p style="color:#ff6b6b;font-weight:bold;">Markdownの解析結果が0件でした</p>' +
+            '<p style="font-size:0.85rem;">取得できた content/source.md の先頭500文字：</p>' +
+            '<pre style="background:#000;color:#7CFC00;padding:1rem;overflow-x:auto;font-size:0.8rem;">' + preview + '</pre>' +
+            '</div>';
+          progressEl.textContent = '';
+          nextBtn.disabled = true;
+          return;
+        }
 
-            const pre = document.createElement('pre');
-            pre.textContent = text;
+        const idea = ideas[index];
+        appEl.innerHTML = '';
 
-            const copyBtn = document.createElement('button');
-            copyBtn.type = 'button';
-            copyBtn.textContent = `パターン${i + 1}をコピー`;
-            copyBtn.addEventListener('click', () => {
-              navigator.clipboard.writeText(text).then(() => {
-                const orig = copyBtn.textContent;
-                copyBtn.textContent = 'コピーしました';
-                setTimeout(() => { copyBtn.textContent = orig; }, 1500);
-              });
+        presets.forEach((preset, i) => {
+          const text = buildText(preset, idea);
+          const block = document.createElement('div');
+          block.className = 'block';
+
+          const pre = document.createElement('pre');
+          pre.textContent = text;
+
+          const copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.textContent = `パターン${i + 1}をコピー`;
+          copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(text).then(() => {
+              const orig = copyBtn.textContent;
+              copyBtn.textContent = 'コピーしました';
+              setTimeout(() => { copyBtn.textContent = orig; }, 1500);
             });
-
-            block.appendChild(pre);
-            block.appendChild(copyBtn);
-            appEl.appendChild(block);
           });
 
-          progressEl.textContent = `${index + 1} / ${ideas.length} 件目`;
-          const isLast = index >= ideas.length - 1;
-          nextBtn.disabled = isLast;
-          nextBtn.textContent = isLast
-            ? 'このMarkdownは最後まで到達しました（ファイルを書き換えてください）'
-            : '次へ';
-        }
-
-        nextBtn.addEventListener('click', () => {
-          if (index < ideas.length - 1) {
-            index += 1;
-            render();
-            window.scrollTo(0, 0);
-          }
+          block.appendChild(pre);
+          block.appendChild(copyBtn);
+          appEl.appendChild(block);
         });
 
-        nextBtn.disabled = false;
-        render();
-      } catch (err) {
-        progressEl.textContent = 'ファイルの読み込みに失敗しました。';
-        console.error(err);
+        progressEl.textContent = `${index + 1} / ${ideas.length} 件目`;
+        const isLast = index >= ideas.length - 1;
+        nextBtn.disabled = isLast;
+        nextBtn.textContent = isLast
+          ? 'このMarkdownは最後まで到達しました（ファイルを書き換えてください）'
+          : '次へ';
       }
-    }
 
-    init();
-  </script>
+      nextBtn.addEventListener('click', () => {
+        if (index < ideas.length - 1) {
+          index += 1;
+          render();
+          window.scrollTo(0, 0);
+        }
+      });
+
+      nextBtn.disabled = false;
+      render();
+    } catch (err) {
+      progressEl.textContent = 'ファイルの読み込みに失敗しました。';
+      console.error(err);
+    }
+  }
+
+  init();
+</script>
 </body>
 </html>
