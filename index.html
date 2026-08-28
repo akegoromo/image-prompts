@@ -17,6 +17,8 @@
       --accent-hover: #3b76c2;
       --pre-bg: #061020;
       --disabled-bg: #35507a;
+      --copied-bg: #2a7a5a;
+      --copied-text: #eafff5;
     }
     body {
       font-family: system-ui, -apple-system, "Segoe UI",
@@ -59,8 +61,16 @@
       border: none;
       border-radius: 6px;
       font-weight: 600;
+      transition: background-color 0.2s ease, color 0.2s ease;
     }
     button:hover:not(:disabled) { background-color: var(--accent-hover); }
+    button.btn-copied {
+      background-color: var(--copied-bg);
+      color: var(--copied-text);
+    }
+    button.btn-copied:hover:not(:disabled) {
+      background-color: #23664c;
+    }
     #next-btn { display: block; width: 100%; margin-top: 1.2rem; padding: 0.9rem; font-size: 1rem; }
     #next-btn:disabled { background-color: var(--disabled-bg); color: var(--text-sub); cursor: not-allowed; }
   </style>
@@ -198,6 +208,10 @@ function buildText(preset, idea) {
             navigator.clipboard.writeText(text).then(() => {
               const orig = copyBtn.textContent;
               copyBtn.textContent = 'コピーしました';
+
+              // 追加：色は「次へ」を押すまでそのまま維持される
+              copyBtn.classList.add('btn-copied');
+
               setTimeout(() => { copyBtn.textContent = orig; }, 1500);
             });
           });
